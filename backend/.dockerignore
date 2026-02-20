@@ -1,0 +1,29 @@
+# Backend .dockerignore
+# Exclude files that should NOT be copied into the Docker image
+
+# Version control
+.git/
+.gitignore
+
+# Environment files — injected at runtime via docker-compose env_file
+.env
+.env.*
+
+# Development artifacts
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Documentation
+README.md
+*.md
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+*.swp
+*.swo

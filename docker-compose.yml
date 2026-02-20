@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml
+# MediCode AI — Full-Stack Container Orchestration
+#
+# Services:
+#   medicode-backend   → Node.js/Express API on port 5001 (internal)
+#   medicode-frontend  → Nginx serving Vite SPA on port 3000 (public)
+#
+# Usage:
+#   docker compose up --build          ← first run / after code changes
+#   docker compose up -d               ← detached (background)
+#   docker compose down                ← stop and remove containers
+#   docker compose logs -f             ← follow logs
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Backend — Node.js Express API ────────────────────────────────────────────
+  medicode-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medicode-backend
+    restart: unless-stopped
+
+    # Environment — reads from backend/.env file
+    # Override GEMINI_API_KEY here OR in backend/.env
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      # Override ALLOWED_ORIGINS to allow nginx container
+      ALLOWED_ORIGINS: "http://localhost:3000,http://medicode-frontend:80"
+
+    # Backend is NOT exposed to host directly — only reachable internally
+    # (nginx proxies /api/* to it). Uncomment to expose for debugging:
+    # ports:
+    #   - "5001:5001"
+
+    networks:
+      - medicode-net
+
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:5001/api/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+    # Resource limits — prevent runaway memory from streaming requests
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+
+  # ── Frontend — Nginx serving Vite build ──────────────────────────────────────
+  medicode-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medicode-frontend
+    restart: unless-stopped
+
+    # Expose port 3000 on the host → nginx port 80 inside container
+    ports:
+      - "3000:80"
+
+    networks:
+      - medicode-net
+
+    # Wait for backend to be healthy before starting
+    depends_on:
+      medicode-backend:
+        condition: service_healthy
+
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:80/" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.5"
+
+# ── Shared network ─────────────────────────────────────────────────────────────
+networks:
+  medicode-net:
+    driver: bridge
+    name: medicode-network
