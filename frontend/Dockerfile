@@ -18,6 +18,10 @@ RUN npm ci --ignore-scripts
 # Copy all source files
 COPY . .
 
+# Accept backend URL at build time (can be overridden via docker-compose args)
+ARG VITE_API_URL=http://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
+
 # Production build — outputs to /app/dist
 RUN npm run build
 

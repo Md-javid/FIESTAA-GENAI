@@ -1,12 +1,15 @@
 /**
- * App.jsx
- * Root component — Sidebar + Router layout with ambient background.
+ * App.jsx — Root component with JWT auth gate + Sidebar + Router layout
  */
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
-/* ── Pages ────────────────────────────────────────────────────────────── */
+/* ── Auth ─────────────────────────────────────────────────────────────────── */
+import { AuthProvider, useAuth } from './context/AuthContext';
+import LoginPage from './components/LoginPage';
+
+/* ── Pages ────────────────────────────────────────────────────────────────── */
 import Sidebar from './components/Sidebar';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import Dashboard from './components/Dashboard';
@@ -16,30 +19,21 @@ import FhirExplorer from './components/FhirExplorer';
 import CompliancePage from './components/CompliancePage';
 import SettingsPage from './components/SettingsPage';
 
-/* ── Ambient floating neon orbs ──────────────────────────────────────── */
+/* ── Ambient floating neon orbs ──────────────────────────────────────────── */
 function AmbientBackground() {
   return (
     <div
       aria-hidden="true"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 0,
-        overflow: 'hidden',
-        pointerEvents: 'none',
-      }}
+      style={{ position: 'fixed', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}
     >
-      {/* Teal orb */}
       <div className="orb orb-teal" />
-      {/* Purple orb */}
       <div className="orb orb-purple" />
-      {/* Subtle pink orb */}
       <div className="orb orb-pink" />
     </div>
   );
 }
 
-/* ── Page transition wrapper ─────────────────────────────────────────── */
+/* ── Page transition wrapper ─────────────────────────────────────────────── */
 function PageWrapper({ children }) {
   return (
     <motion.div
@@ -54,27 +48,23 @@ function PageWrapper({ children }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════════════ */
-export default function App() {
+/* ── Protected layout (requires login) ──────────────────────────────────── */
+function AppLayout() {
+  const { user, logout } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  return (
-    <BrowserRouter>
-      <AmbientBackground />
+  if (!user) return <Navigate to="/login" replace />;
 
-      <div style={{
-        position: 'relative',
-        zIndex: 1,
-        display: 'flex',
-        minHeight: '100vh',
-      }}>
-        {/* Permanent sidebar */}
+  return (
+    <>
+      <AmbientBackground />
+      <div style={{ position: 'relative', zIndex: 1, display: 'flex', minHeight: '100vh' }}>
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed(c => !c)}
+          user={user}
+          onLogout={logout}
         />
-
-        {/* Page area */}
         <AnimatePresence mode="wait">
           <Routes>
             <Route path="/" element={<PageWrapper><AnalyticsDashboard /></PageWrapper>} />
@@ -84,9 +74,31 @@ export default function App() {
             <Route path="/fhir" element={<PageWrapper><FhirExplorer /></PageWrapper>} />
             <Route path="/compliance" element={<PageWrapper><CompliancePage /></PageWrapper>} />
             <Route path="/settings" element={<PageWrapper><SettingsPage /></PageWrapper>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AnimatePresence>
       </div>
-    </BrowserRouter>
+    </>
   );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+export default function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<AuthGate />} />
+          <Route path="/*" element={<AppLayout />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
+
+/* ── Auth gate — if already logged in, redirect to app ──────────────────── */
+function AuthGate() {
+  const { user, saveAuth } = useAuth();
+  if (user) return <Navigate to="/" replace />;
+  return <LoginPage onSuccess={(u) => { /* saveAuth handled inside LoginPage */ }} />;
 }

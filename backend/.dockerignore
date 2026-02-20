@@ -1,29 +1,38 @@
-# Backend .dockerignore
-# Exclude files that should NOT be copied into the Docker image
-
-# Version control
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+*.log
+*.pot
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+node_modules/
+package.json
+package-lock.json
+server.js
+systemPrompt.js
+routes/
+controllers/
+*.sqlite3
+db.sqlite3
+.env
+media/
+staticfiles/
 .git/
 .gitignore
-
-# Environment files — injected at runtime via docker-compose env_file
-.env
-.env.*
-
-# Development artifacts
-node_modules/
-npm-debug.log*
-yarn-error.log*
-
-# Documentation
-README.md
-*.md
-
-# OS artifacts
-.DS_Store
-Thumbs.db
-
-# Editor configs
-.vscode/
-.idea/
-*.swp
-*.swo

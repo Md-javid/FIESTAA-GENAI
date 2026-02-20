@@ -9,7 +9,7 @@ import { motion } from 'framer-motion';
 import {
     LayoutDashboard, BrainCircuit, History as HistoryIcon, Shield, Users,
     FileText, Settings, Activity, Sparkles, HeartPulse,
-    ChevronLeft, ChevronRight, Search,
+    ChevronLeft, ChevronRight, Search, LogOut,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -22,7 +22,7 @@ const NAV_ITEMS = [
     { path: '/settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Sidebar({ collapsed, onToggle }) {
+export default function Sidebar({ collapsed, onToggle, user, onLogout }) {
     const location = useLocation();
 
     return (
@@ -172,16 +172,53 @@ export default function Sidebar({ collapsed, onToggle }) {
                 })}
             </nav>
 
-            {/* Collapse toggle */}
+            {/* User profile card */}
+            {user && (
+                <div style={{ padding: '10px 10px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: collapsed ? '10px 0' : '10px 12px',
+                        justifyContent: collapsed ? 'center' : 'flex-start',
+                        borderRadius: 10,
+                        background: 'rgba(255,255,255,0.03)',
+                    }}>
+                        <div style={{
+                            width: 34, height: 34, minWidth: 34, borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #00d4ff, #8b5cf6)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 15, fontWeight: 700, color: 'white', flexShrink: 0,
+                        }}>
+                            {(user.full_name || 'U')[0].toUpperCase()}
+                        </div>
+                        {!collapsed && (
+                            <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {user.full_name}
+                                </div>
+                                <div style={{
+                                    fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+                                    color: user.role === 'doctor' ? '#00d4ff' : '#8b5cf6',
+                                    marginTop: 2,
+                                }}>
+                                    {user.role === 'doctor' ? '🩺 Doctor' : '🏥 Hospital'}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Collapse toggle + Logout */}
             <div style={{
-                padding: '12px 8px',
-                borderTop: '1px solid rgba(255,255,255,0.05)',
-                display: 'flex', justifyContent: 'center',
+                padding: '10px 8px 16px',
+                display: 'flex', flexDirection: collapsed ? 'column' : 'row',
+                gap: 6, alignItems: 'center', justifyContent: 'center',
             }}>
                 <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={onToggle}
+                    title={collapsed ? 'Expand' : 'Collapse'}
                     style={{
                         width: 32, height: 32, borderRadius: 8,
                         background: 'rgba(255,255,255,0.04)',
@@ -192,25 +229,54 @@ export default function Sidebar({ collapsed, onToggle }) {
                 >
                     {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
                 </motion.button>
+
+                <motion.button
+                    whileHover={{ scale: 1.1, color: '#ef4444' }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={onLogout}
+                    title="Logout"
+                    style={{
+                        width: 32, height: 32, borderRadius: 8,
+                        background: 'rgba(239,68,68,0.06)',
+                        border: '1px solid rgba(239,68,68,0.15)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', color: 'rgba(239,68,68,0.6)',
+                    }}
+                >
+                    <LogOut size={14} />
+                </motion.button>
+
+                {!collapsed && (
+                    <motion.button
+                        whileHover={{ opacity: 0.8 }}
+                        onClick={onLogout}
+                        style={{
+                            flex: 1, padding: '7px 10px', borderRadius: 8, fontSize: 11,
+                            background: 'rgba(239,68,68,0.06)',
+                            border: '1px solid rgba(239,68,68,0.15)',
+                            color: 'rgba(239,68,68,0.7)', cursor: 'pointer', fontWeight: 600,
+                        }}
+                    >
+                        Sign Out
+                    </motion.button>
+                )}
             </div>
 
             {/* Status card (expanded only) */}
             {!collapsed && (
                 <div style={{ padding: '0 14px 16px' }}>
                     <div style={{
-                        padding: '12px 14px', borderRadius: 12,
+                        padding: '10px 12px', borderRadius: 12,
                         background: 'rgba(16,185,129,0.06)',
                         border: '1px solid rgba(16,185,129,0.15)',
                     }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                            <div className="pulse-dot" style={{
-                                width: 6, height: 6, borderRadius: '50%', background: '#10b981'
-                            }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                            <div className="pulse-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
                             <span style={{ fontSize: 11, fontWeight: 600, color: '#10b981' }}>System Online</span>
                         </div>
                         <p style={{ fontSize: 10, color: 'rgba(148,163,184,0.5)', lineHeight: 1.5 }}>
                             ABDM Gateway Connected<br />
-                            Gemini 1.5 Pro Ready
+                            Gemini AI Ready
                         </p>
                     </div>
                 </div>

@@ -14,7 +14,7 @@ import {
     Download, RefreshCw, BrainCircuit, Sparkles, FileText,
     CheckCircle2, AlertTriangle, Info, X,
 } from 'lucide-react';
-import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
 
 // ─── Animation Variants ───────────────────────────────────────────────────────
 
@@ -553,6 +553,7 @@ function Header() {
 
 // ─── MAIN DASHBOARD ────────────────────────────────────────────────────────────
 export default function Dashboard() {
+    const { authFetch, tokens } = useAuth();
     const [clinicalNote, setClinicalNote] = useState('');
     const [result, setResult] = useState(null);
     const [status, setStatus] = useState('idle'); // idle | loading | streaming | done | error
@@ -622,63 +623,37 @@ export default function Dashboard() {
         setOverallConf(0);
 
         try {
-            if (liveStreaming) {
-                // ── Streaming Mode ──────────────────────────────────────────────────
-                setStatus('streaming');
+            // ── Django API call with JWT auth ───────────────────────────────────
+            const response = await authFetch('/api/generate-medical-codes/', {
+                method: 'POST',
+                body: JSON.stringify({ clinicalNote, autoDetect }),
+            });
 
-                const response = await fetch('/api/generate-medical-codes/stream', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        clinicalNote,
-                        autoDetect,
-                    }),
-                });
-
-                if (!response.ok) throw new Error(`Server error: ${response.status}`);
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let accumulated = '';
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    const chunk = decoder.decode(value, { stream: true });
-                    // SSE format: lines starting with "data: "
-                    const lines = chunk.split('\n');
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const payload = line.slice(6);
-                            if (payload === '[DONE]') break;
-                            try {
-                                const parsed = JSON.parse(payload);
-                                if (parsed.text) {
-                                    accumulated += parsed.text;
-                                    setStreamedText(accumulated);
-                                }
-                                if (parsed.final) {
-                                    setResult(parsed.final);
-                                    const conf = parsed.final.overall_confidence ?? 0;
-                                    setOverallConf(conf);
-                                    setStatus('done');
-                                }
-                            } catch (_) { /* partial chunk, keep going */ }
-                        }
-                    }
-                }
-                if (status !== 'done') setStatus('done');
-
-            } else {
-                // ── Non-Streaming Mode ───────────────────────────────────────────────
-                const { data } = await axios.post('/api/generate-medical-codes', {
-                    clinicalNote,
-                    autoDetect,
-                });
-                setResult(data);
-                setOverallConf(data.overall_confidence ?? 0);
-                setStatus('done');
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || `Server error: ${response.status}`);
             }
+
+            const json = await response.json();
+            const data = json.data || json;
+
+            // Map Django response → existing UI shape
+            const mapped = {
+                icd11: (data.icd_codes || []).map(c => ({ code: c.code, description: c.description, confidence: Math.round((c.confidence || 0) * 100), notes: '' })),
+                namaste: (data.cpt_codes || []).map(c => ({ code: c.code, description: c.description, confidence: Math.round((c.confidence || 0) * 100) })),
+                clinical_summary: data.summary || '',
+                overall_confidence: Math.round(
+                    (data.icd_codes || []).reduce((a, c) => a + (c.confidence || 0), 0) /
+                    Math.max((data.icd_codes || []).length, 1) * 100
+                ),
+                ehr_compliance: data.abdm_tags || ['ABDM v3', 'ICD-11 TM2', 'FHIR R4'],
+                risk_level: data.risk_level,
+                primary_diagnosis: data.primary_diagnosis,
+            };
+
+            setResult(mapped);
+            setOverallConf(mapped.overall_confidence);
+            setStatus('done');
         } catch (err) {
             console.error(err);
             setErrorMsg(err.message || 'Failed to reach the AI backend. Please try again.');

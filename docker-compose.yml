@@ -1,10 +1,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# docker-compose.yml
-# MediCode AI — Full-Stack Container Orchestration
+# docker-compose.yml — MediCode AI v3.0 (Django + React + Nginx)
 #
 # Services:
-#   medicode-backend   → Node.js/Express API on port 5001 (internal)
-#   medicode-frontend  → Nginx serving Vite SPA on port 3000 (public)
+#   medicode-backend   → Django/Gunicorn API on port 8000 (internal)
+#   medicode-frontend  → Nginx serving React SPA on port 3000 (public)
 #
 # Usage:
 #   docker compose up --build          ← first run / after code changes
@@ -15,7 +14,7 @@
 
 services:
 
-  # ── Backend — Node.js Express API ────────────────────────────────────────────
+  # ── Backend — Django / Gunicorn ──────────────────────────────────────────────
   medicode-backend:
     build:
       context: ./backend
@@ -23,54 +22,69 @@ services:
     container_name: medicode-backend
     restart: unless-stopped
 
-    # Environment — reads from backend/.env file
-    # Override GEMINI_API_KEY here OR in backend/.env
     env_file:
       - ./backend/.env
     environment:
-      NODE_ENV: production
-      PORT: 5001
-      # Override ALLOWED_ORIGINS to allow nginx container
+      DEBUG: "False"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,medicode-backend"
       ALLOWED_ORIGINS: "http://localhost:3000,http://medicode-frontend:80"
+      # Uncomment to use PostgreSQL instead of SQLite:
+      # DATABASE_URL: "postgresql://medicode:medicode@medicode-db:5432/medicode"
 
-    # Backend is NOT exposed to host directly — only reachable internally
-    # (nginx proxies /api/* to it). Uncomment to expose for debugging:
-    # ports:
-    #   - "5001:5001"
+      # Backend internal only — nginx proxies /api/* to it
+      # ports:
+      #   - "8000:8000"
 
     networks:
       - medicode-net
 
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:5001/api/health" ]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/auth/health/')" ]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      start_period: 20s
 
-    # Resource limits — prevent runaway memory from streaming requests
+    volumes:
+      - backend-media:/app/media
+      - backend-static:/app/staticfiles
+
     deploy:
       resources:
         limits:
           memory: 512m
           cpus: "1.0"
 
-  # ── Frontend — Nginx serving Vite build ──────────────────────────────────────
+  # # ── Optional: PostgreSQL ───────────────────────────────────────────────────
+  # medicode-db:
+  #   image: postgres:16-alpine
+  #   container_name: medicode-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: medicode
+  #     POSTGRES_USER: medicode
+  #     POSTGRES_PASSWORD: medicode
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - medicode-net
+
+  # ── Frontend — Nginx serving React/Vite build ────────────────────────────────
   medicode-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: "http://localhost:8000"
     container_name: medicode-frontend
     restart: unless-stopped
 
-    # Expose port 3000 on the host → nginx port 80 inside container
     ports:
       - "3000:80"
 
     networks:
       - medicode-net
 
-    # Wait for backend to be healthy before starting
     depends_on:
       medicode-backend:
         condition: service_healthy
@@ -88,7 +102,13 @@ services:
           memory: 128m
           cpus: "0.5"
 
-# ── Shared network ─────────────────────────────────────────────────────────────
+# ── Volumes ────────────────────────────────────────────────────────────────────
+volumes:
+  backend-media:
+  backend-static:
+    # postgres-data:
+
+    # ── Shared network ─────────────────────────────────────────────────────────────
 networks:
   medicode-net:
     driver: bridge

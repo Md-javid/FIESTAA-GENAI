@@ -1,51 +1,33 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# MediCode AI — Backend Dockerfile
-# Node 20 LTS on Alpine (tiny, secure image)
+# Dockerfile — MediCode AI Django Backend
 # ─────────────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim
 
-# ── Stage 1: Install production dependencies ──────────────────────────────────
-FROM node:20-alpine AS deps
-
-WORKDIR /app
-
-# Copy only package manifests first (layer-cache trick — rebuilds only if deps change)
-COPY package.json package-lock.json ./
-
-# Install ONLY production deps — skip devDependencies
-RUN npm ci --omit=dev --ignore-scripts
-
-# ── Stage 2: Final runtime image ──────────────────────────────────────────────
-FROM node:20-alpine AS runner
-
-# Labels for Docker Hub / GHCR metadata
-LABEL org.opencontainers.image.title="MediCode AI Backend" \
-      org.opencontainers.image.description="Secure EHR Middleware — NAMASTE & ICD-11 TM2 via Gemini" \
-      org.opencontainers.image.version="2.0.0"
+# System deps
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  libpq-dev \
+  curl \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Create a non-root user for security (avoid running as root in production)
-RUN addgroup --system --gid 1001 medicode && \
-    adduser  --system --uid 1001 --ingroup medicode medicode
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy installed node_modules from deps stage
-COPY --from=deps /app/node_modules ./node_modules
+# Copy project (exclude node_modules, .env via .dockerignore)
+COPY . .
 
-# Copy application source
-COPY server.js          ./server.js
-COPY systemPrompt.js    ./systemPrompt.js
-COPY controllers/       ./controllers/
-COPY routes/            ./routes/
+# Collect static files
+RUN python manage.py collectstatic --noinput
 
-# Switch to non-root user
-USER medicode
+EXPOSE 8000
 
-# Expose the API port
-EXPOSE 5001
-
-# Health-check so Docker knows when the service is ready
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:5001/api/health || exit 1
-
-# Start the server
-CMD ["node", "server.js"]
+# Use gunicorn in production
+CMD ["gunicorn", "medicode_backend.wsgi:application", \
+  "--bind", "0.0.0.0:8000", \
+  "--workers", "4", \
+  "--timeout", "120", \
+  "--access-logfile", "-", \
+  "--error-logfile", "-"]
