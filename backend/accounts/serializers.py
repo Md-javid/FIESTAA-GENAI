@@ -16,7 +16,8 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'email', 'full_name', 'role',
             'specialty', 'license_number', 'registration_id',
-            'hospital_name', 'hospital_type', 'facility_id',
+            'hospital_name', 'hospital_type', 'facility_id', 'hospital_code',
+            'affiliated_hospital',
             'phone', 'city', 'state', 'avatar_url',
             'is_verified', 'date_joined', 'last_login',
         ]

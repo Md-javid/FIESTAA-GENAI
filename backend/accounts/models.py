@@ -1,5 +1,6 @@
 """
-accounts/models.py — Custom User model with DOCTOR / HOSPITAL roles
+accounts/models.py — Custom User model with DOCTOR / HOSPITAL / ADMIN roles
+Hospital-scoped data isolation: doctors belong to one hospital.
 """
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
@@ -48,6 +49,20 @@ class User(AbstractBaseUser, PermissionsMixin):
     hospital_name    = models.CharField(max_length=255, blank=True)
     hospital_type    = models.CharField(max_length=100, blank=True)
     facility_id      = models.CharField(max_length=100, blank=True)
+    hospital_code    = models.CharField(max_length=20, blank=True, unique=False,
+                           help_text='Unique tenant code for hospital accounts')
+
+    # ── doctor → hospital link (multi-tenancy) ────────────────────────────────
+    # Doctors are linked to a Hospital user account. Hospital admins see ALL
+    # patients/history of every doctor under their hospital_code.
+    affiliated_hospital = models.ForeignKey(
+        'self',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='affiliated_doctors',
+        limit_choices_to={'role': 'hospital'},
+        help_text='For doctors: the hospital they belong to',
+    )
 
     # ── shared profile ────────────────────────────────────────────────────────
     phone            = models.CharField(max_length=20, blank=True)
@@ -82,3 +97,21 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def is_hospital(self):
         return self.role == self.HOSPITAL
+
+    def get_hospital_doctors(self):
+        """For hospital accounts: return QuerySet of all their doctors."""
+        if not self.is_hospital:
+            return type(self).objects.none()
+        return type(self).objects.filter(affiliated_hospital=self)
+
+    def get_scoped_hospital(self):
+        """Return the hospital account that scopes this user's data.
+        - Hospital role  → self
+        - Doctor role    → affiliated_hospital
+        - Admin          → None (sees everything)
+        """
+        if self.is_hospital:
+            return self
+        if self.is_doctor and self.affiliated_hospital_id:
+            return self.affiliated_hospital
+        return None

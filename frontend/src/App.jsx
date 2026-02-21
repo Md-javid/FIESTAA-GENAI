@@ -1,5 +1,6 @@
 /**
  * App.jsx — Root component with JWT auth gate + Sidebar + Router layout
+ * Role-based routing: hospital → HospitalDashboard, doctor → AnalyticsDashboard
  */
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -18,6 +19,7 @@ import HistoryPage from './components/HistoryPage';
 import FhirExplorer from './components/FhirExplorer';
 import CompliancePage from './components/CompliancePage';
 import SettingsPage from './components/SettingsPage';
+import HospitalDashboard from './components/HospitalDashboard';
 
 /* ── Ambient floating neon orbs ──────────────────────────────────────────── */
 function AmbientBackground() {
@@ -55,6 +57,8 @@ function AppLayout() {
 
   if (!user) return <Navigate to="/login" replace />;
 
+  const isHospital = user.role === 'hospital';
+
   return (
     <>
       <AmbientBackground />
@@ -67,7 +71,22 @@ function AppLayout() {
         />
         <AnimatePresence mode="wait">
           <Routes>
-            <Route path="/" element={<PageWrapper><AnalyticsDashboard /></PageWrapper>} />
+            {/* ── Root: role-based home ── */}
+            <Route
+              path="/"
+              element={
+                <PageWrapper>
+                  {isHospital ? <HospitalDashboard /> : <AnalyticsDashboard />}
+                </PageWrapper>
+              }
+            />
+            {/* ── Hospital-specific ── */}
+            <Route path="/hospital" element={
+              <PageWrapper>
+                {isHospital ? <HospitalDashboard /> : <Navigate to="/" replace />}
+              </PageWrapper>
+            } />
+            {/* ── Common pages ── */}
             <Route path="/generate" element={<PageWrapper><Dashboard /></PageWrapper>} />
             <Route path="/patients" element={<PageWrapper><PatientsPage /></PageWrapper>} />
             <Route path="/history" element={<PageWrapper><HistoryPage /></PageWrapper>} />
@@ -98,7 +117,7 @@ export default function App() {
 
 /* ── Auth gate — if already logged in, redirect to app ──────────────────── */
 function AuthGate() {
-  const { user, saveAuth } = useAuth();
+  const { user } = useAuth();
   if (user) return <Navigate to="/" replace />;
-  return <LoginPage onSuccess={(u) => { /* saveAuth handled inside LoginPage */ }} />;
+  return <LoginPage onSuccess={() => { }} />;
 }

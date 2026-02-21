@@ -1,16 +1,17 @@
 /**
  * AnalyticsDashboard.jsx
  * Home page — KPI cards, donut charts, recent activity feed,
- * compliance gauge, and trending diagnoses.
+ * compliance gauge, and trending diagnoses. Now with live backend data.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import {
     Activity, BrainCircuit, Shield, Users, TrendingUp,
     Clock, FileText, Sparkles, ArrowUpRight, AlertTriangle,
     CheckCircle2, Heart, Stethoscope, Zap, BarChart3,
-    History as HistoryIcon,
+    History as HistoryIcon, RefreshCw,
 } from 'lucide-react';
 
 const fadeUp = (i = 0) => ({
@@ -139,42 +140,99 @@ function ActivityItem({ time, title, desc, icon: Icon, color }) {
 /* ══════════════════════════════════════════════════ */
 export default function AnalyticsDashboard() {
     const navigate = useNavigate();
+    const { authFetch, user } = useAuth();
     const [greeting, setGreeting] = useState('');
+    const [analytics, setAnalytics] = useState(null);
+    const [loadingAnalytics, setLoadingAnalytics] = useState(true);
 
     useEffect(() => {
         const hr = new Date().getHours();
         setGreeting(hr < 12 ? 'Good Morning' : hr < 17 ? 'Good Afternoon' : 'Good Evening');
     }, []);
 
+    const fetchAnalytics = useCallback(async () => {
+        setLoadingAnalytics(true);
+        try {
+            const res = await authFetch('/api/analytics/');
+            if (res.ok) {
+                const json = await res.json();
+                setAnalytics(json);
+            }
+        } catch (e) { }
+        finally { setLoadingAnalytics(false); }
+    }, [authFetch]);
+
+    useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
+
+    const ov = analytics?.overview || {};
+    const dailyActivity = analytics?.daily_activity || [];
+
     const KPI = [
-        { label: 'Total Sessions', value: '1,247', change: '+12.5%', icon: Activity, color: '#00d4ff', sparkData: [20, 35, 28, 45, 38, 52, 48, 60, 55, 72, 68, 85] },
-        { label: 'Codes Generated', value: '8,392', change: '+18.2%', icon: BrainCircuit, color: '#8b5cf6', sparkData: [100, 150, 130, 200, 180, 250, 220, 310, 280, 350, 320, 400] },
-        { label: 'Active Patients', value: '342', change: '+5.1%', icon: Users, color: '#10b981', sparkData: [200, 220, 210, 235, 225, 250, 240, 260, 255, 280, 270, 300] },
-        { label: 'Avg Confidence', value: '91.4%', change: '+2.3%', icon: Sparkles, color: '#f59e0b', sparkData: [85, 87, 86, 88, 89, 90, 89, 91, 90, 92, 91, 93] },
+        { label: 'Total Sessions', value: ov.total_codes_generated ?? '—', change: `+${ov.codes_this_month ?? 0} this month`, icon: Activity, color: '#00d4ff', sparkData: dailyActivity.length > 0 ? dailyActivity.map(d => d.codes || 0) : [0, 1, 0, 2, 1, 3, 2] },
+        { label: 'Codes Generated', value: ov.total_codes_generated ?? '—', change: `${ov.success_rate ?? 100}% success`, icon: BrainCircuit, color: '#8b5cf6', sparkData: dailyActivity.length > 0 ? dailyActivity.map(d => d.codes || 0) : [0, 1, 2, 1, 3, 2, 4] },
+        { label: 'My Patients', value: ov.total_patients ?? '—', change: 'All time', icon: Users, color: '#10b981', sparkData: [1, 1, 2, 2, 3, 3, ov.total_patients || 0] },
+        { label: 'Success Rate', value: ov.success_rate != null ? `${ov.success_rate}%` : '—', change: 'AI accuracy', icon: Sparkles, color: '#f59e0b', sparkData: [80, 85, 82, 88, 86, 90, ov.success_rate || 90] },
     ];
 
-    const weeklyBars = [
-        { label: 'Mon', value: 45, color: '#00d4ff' },
-        { label: 'Tue', value: 62, color: '#00d4ff' },
-        { label: 'Wed', value: 38, color: '#00d4ff' },
-        { label: 'Thu', value: 70, color: '#8b5cf6' },
-        { label: 'Fri', value: 55, color: '#8b5cf6' },
-        { label: 'Sat', value: 28, color: '#8b5cf6' },
-        { label: 'Sun', value: 15, color: '#8b5cf6' },
-    ];
+    const weeklyBars = dailyActivity.length > 0
+        ? dailyActivity.map((d, i) => ({ label: d.date, value: d.codes || 0, color: i < 4 ? '#00d4ff' : '#8b5cf6' }))
+        : [
+            { label: 'Mon', value: 0, color: '#00d4ff' },
+            { label: 'Tue', value: 0, color: '#00d4ff' },
+            { label: 'Wed', value: 0, color: '#00d4ff' },
+            { label: 'Thu', value: 0, color: '#8b5cf6' },
+            { label: 'Fri', value: 0, color: '#8b5cf6' },
+            { label: 'Sat', value: 0, color: '#8b5cf6' },
+            { label: 'Sun', value: 0, color: '#8b5cf6' },
+        ];
+
+    const isNewDoctor = !loadingAnalytics && ov.total_codes_generated === 0;
 
     return (
         <div style={{ padding: '24px 28px', maxWidth: 1400 }}>
             {/* Header */}
             <motion.div variants={fadeUp(0)} initial="hidden" animate="visible"
-                style={{ marginBottom: 28 }}>
-                <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 4 }}>
-                    <span className="gradient-text">{greeting}, Doctor</span> 👋
-                </h1>
-                <p style={{ fontSize: 13, color: 'rgba(148,163,184,0.6)' }}>
-                    Here's your clinical coding analytics overview for today.
-                </p>
+                style={{ marginBottom: 28, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                    <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 4 }}>
+                        <span className="gradient-text">{greeting}, {user?.full_name?.split(' ')[0] || 'Doctor'}</span> 👋
+                    </h1>
+                    <p style={{ fontSize: 13, color: 'rgba(148,163,184,0.6)' }}>
+                        {isNewDoctor
+                            ? "Welcome! Start by generating your first medical codes."
+                            : "Here's your clinical coding analytics overview for today."}
+                    </p>
+                </div>
+                <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                    onClick={fetchAnalytics}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(148,163,184,0.6)', fontSize: 12, cursor: 'pointer', fontFamily: 'Inter' }}>
+                    <RefreshCw size={13} /> Refresh
+                </motion.button>
             </motion.div>
+
+            {/* New Doctor Welcome Card */}
+            {isNewDoctor && (
+                <motion.div variants={fadeUp(1)} initial="hidden" animate="visible"
+                    className="glass-panel"
+                    style={{ padding: '20px 24px', borderRadius: 16, marginBottom: 24, border: '1px solid rgba(0,212,255,0.15)', background: 'rgba(0,212,255,0.035)' }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, color: '#00d4ff', marginBottom: 10 }}>🚀 Get started with MediCode AI</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                        {[
+                            { num: '1', title: 'Register Your First Patient', desc: 'Go to Patients → Add Patient', path: '/patients', color: '#10b981' },
+                            { num: '2', title: 'Generate Medical Codes', desc: 'Paste a clinical note on the Workstation', path: '/generate', color: '#8b5cf6' },
+                            { num: '3', title: 'View Your History', desc: 'Review all past coding sessions', path: '/history', color: '#f59e0b' },
+                        ].map(s => (
+                            <motion.div key={s.num} whileHover={{ scale: 1.03 }} onClick={() => navigate(s.path)}
+                                style={{ padding: '14px 16px', borderRadius: 12, background: `${s.color}08`, border: `1px solid ${s.color}20`, cursor: 'pointer' }}>
+                                <span style={{ display: 'block', fontSize: 24, fontWeight: 800, color: s.color, marginBottom: 4 }}>{s.num}</span>
+                                <p style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 3 }}>{s.title}</p>
+                                <p style={{ fontSize: 11, color: 'rgba(148,163,184,0.6)' }}>{s.desc}</p>
+                            </motion.div>
+                        ))}
+                    </div>
+                </motion.div>
+            )}
+
 
             {/* KPI Cards Row */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>

@@ -1,185 +1,350 @@
 /**
- * HistoryPage.jsx
- * Coding session history — timeline view of past AI coding sessions.
+ * HistoryPage.jsx — Coding history timeline with:
+ * - Live data from backend
+ * - Working search, date range, sort
+ * - Working Export All (CSV download)
+ * - Working assign code to patient
+ * - Session detail expansion
  */
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
-    History as HistoryIcon, Search, Calendar, Clock, ChevronDown, Download,
-    Activity, BrainCircuit, Shield, CheckCircle2, AlertTriangle,
-    FileText, Eye, Trash2, Filter, ArrowUpDown,
+    Clock, Search, Download, ChevronDown, ChevronUp, CheckCircle2,
+    AlertCircle, FileText, RefreshCw, Filter, Calendar, X,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
-const SESSIONS = [
-    { id: 'S-10247', patient: 'Rajesh Kumar', patientId: 'P-2847', date: '2026-02-20 14:32', note: 'Patient: 58M presenting with progressive anxiety, sleep disturbance, and somatic complaints including palpitations...', icdCodes: ['6A70', '7A01.0'], namasteCodes: ['N1.2', 'M2.4', 'S2'], confidence: 92, status: 'Validated', duration: '3.2s' },
-    { id: 'S-10246', patient: 'Priya Sharma', patientId: 'P-2845', date: '2026-02-19 11:15', note: 'Patient: 34F with 6-month history of low mood, anhedonia, fatigue, and poor concentration...', icdCodes: ['6A70.1', '6A70.2'], namasteCodes: ['N2.1', 'M1.3', 'S3'], confidence: 88, status: 'Validated', duration: '2.8s' },
-    { id: 'S-10245', patient: 'Aarav Patel', patientId: 'P-2840', date: '2026-02-18 16:45', note: 'Patient: 22M with 2-year history of recurrent intrusive thoughts about contamination...', icdCodes: ['6B20', '6B20.0'], namasteCodes: ['N3.1', 'M3.1', 'S4'], confidence: 95, status: 'Validated', duration: '2.5s' },
-    { id: 'S-10244', patient: 'Sneha Reddy', patientId: 'P-2838', date: '2026-02-17 09:20', note: 'Patient: 45F with cyclical mood episodes over 3 years, current depressive episode...', icdCodes: ['6A61', '6A61.1'], namasteCodes: ['N4.2', 'M2.1', 'S3'], confidence: 84, status: 'Pending Review', duration: '4.1s' },
-    { id: 'S-10243', patient: 'Vikram Singh', patientId: 'P-2835', date: '2026-02-16 13:50', note: 'Patient: 62M with uncontrolled Type 2 DM, HbA1c 9.2%, with peripheral neuropathy...', icdCodes: ['5A11', '8C10.0'], namasteCodes: ['N5.1', 'M4.2', 'S3'], confidence: 90, status: 'Validated', duration: '3.0s' },
-    { id: 'S-10242', patient: 'Ananya Iyer', patientId: 'P-2830', date: '2026-02-14 10:30', note: 'Patient: 28F with history of sexual assault, presenting with flashbacks, hypervigilance...', icdCodes: ['6B40', '6B41'], namasteCodes: ['N6.1', 'M5.1', 'S4'], confidence: 87, status: 'Validated', duration: '3.5s' },
-];
+const STATUS_COLORS = {
+    success: { bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.25)', text: '#10b981' },
+    error: { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.25)', text: '#ef4444' },
+    partial: { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.25)', text: '#f59e0b' },
+};
 
-export default function HistoryPage() {
-    const [search, setSearch] = useState('');
-    const [expanded, setExpanded] = useState(null);
-
-    const filtered = SESSIONS.filter(s =>
-        s.patient.toLowerCase().includes(search.toLowerCase()) ||
-        s.id.toLowerCase().includes(search.toLowerCase()) ||
-        s.note.toLowerCase().includes(search.toLowerCase())
+function CodeBadge({ code, type }) {
+    const colors = {
+        icd11: { bg: 'rgba(0,212,255,0.08)', border: 'rgba(0,212,255,0.2)', text: '#00d4ff' },
+        cpt: { bg: 'rgba(139,92,246,0.08)', border: 'rgba(139,92,246,0.2)', text: '#a78bfa' },
+        snomed: { bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.2)', text: '#34d399' },
+    };
+    const c = colors[type] || colors.icd11;
+    return (
+        <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+            background: c.bg, border: `1px solid ${c.border}`, color: c.text,
+            marginRight: 4, marginBottom: 4,
+        }}>{code}</span>
     );
+}
 
-    const confColor = (c) => c >= 90 ? '#10b981' : c >= 75 ? '#f59e0b' : '#ef4444';
+function HistoryItem({ session, onAssign, patients }) {
+    const [expanded, setExpanded] = useState(false);
+    const [assigning, setAssigning] = useState(false);
+    const [assignPatientId, setAssignPatientId] = useState('');
+    const { authFetch } = useAuth();
+
+    const codes = session.generated_codes || {};
+    const icdCodes = codes.icd_codes || [];
+    const cptCodes = codes.cpt_codes || [];
+    const s = STATUS_COLORS[session.status] || STATUS_COLORS.success;
+
+    const handleAssign = async () => {
+        if (!assignPatientId) return;
+        setAssigning(true);
+        try {
+            const res = await authFetch('/api/assign-code-to-patient/', {
+                method: 'POST',
+                body: JSON.stringify({ historyId: session.id, patientId: assignPatientId }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                onAssign && onAssign(session.id, assignPatientId);
+                setExpanded(false);
+            } else {
+                alert(data.error || 'Failed to assign.');
+            }
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setAssigning(false);
+        }
+    };
 
     return (
-        <div style={{ padding: '24px 28px', maxWidth: 1400 }}>
+        <motion.div
+            layout
+            className="glass-panel"
+            style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 8 }}
+        >
+            {/* Row header */}
+            <div
+                onClick={() => setExpanded(e => !e)}
+                style={{ display: 'flex', alignItems: 'center', padding: '14px 18px', cursor: 'pointer', gap: 14 }}
+            >
+                <div style={{
+                    width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                    background: s.bg, border: `1px solid ${s.border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                    {session.status === 'success'
+                        ? <CheckCircle2 size={16} color={s.text} />
+                        : <AlertCircle size={16} color={s.text} />}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
+                            {session.patient_name ? `Patient: ${session.patient_name}` : 'Unassigned Session'}
+                        </p>
+                        <span style={{ padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 600, background: s.bg, border: `1px solid ${s.border}`, color: s.text }}>
+                            {session.status}
+                        </span>
+                    </div>
+                    <p style={{ fontSize: 11, color: 'rgba(148,163,184,0.5)', marginTop: 2 }}>
+                        {new Date(session.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {icdCodes.length > 0 && ` • ${icdCodes.length} code(s) generated`}
+                    </p>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    {icdCodes.slice(0, 2).map(c => <CodeBadge key={c.code} code={c.code} type="icd11" />)}
+                    {icdCodes.length > 2 && <span style={{ fontSize: 11, color: 'rgba(148,163,184,0.4)' }}>+{icdCodes.length - 2}</span>}
+                    {expanded ? <ChevronUp size={14} color="rgba(148,163,184,0.5)" /> : <ChevronDown size={14} color="rgba(148,163,184,0.5)" />}
+                </div>
+            </div>
+
+            {/* Expanded detail */}
+            <AnimatePresence>
+                {expanded && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        style={{ overflow: 'hidden' }}
+                    >
+                        <div style={{ padding: '0 18px 16px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                            {/* Clinical note */}
+                            <div style={{ margin: '14px 0 10px' }}>
+                                <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(148,163,184,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Clinical Note</p>
+                                <p style={{ fontSize: 12, color: 'rgba(226,232,240,0.7)', lineHeight: 1.6, background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+                                    {session.clinical_note?.slice(0, 400)}{session.clinical_note?.length > 400 ? '…' : ''}
+                                </p>
+                            </div>
+
+                            {/* ICD codes */}
+                            {icdCodes.length > 0 && (
+                                <div style={{ marginBottom: 10 }}>
+                                    <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(148,163,184,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>ICD-11 / NAMASTE Codes</p>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                        {icdCodes.map(c => (
+                                            <span key={c.code} title={c.description} style={{ display: 'inline-flex', flexDirection: 'column', padding: '4px 8px', borderRadius: 6, background: 'rgba(0,212,255,0.07)', border: '1px solid rgba(0,212,255,0.15)' }}>
+                                                <span style={{ fontSize: 11, fontWeight: 700, color: '#00d4ff' }}>{c.code}</span>
+                                                <span style={{ fontSize: 10, color: 'rgba(148,163,184,0.5)' }}>{c.description?.slice(0, 30)}</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* CPT/NAMASTE codes */}
+                            {cptCodes.length > 0 && (
+                                <div style={{ marginBottom: 10 }}>
+                                    <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(148,163,184,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>CPT / NAMASTE Codes</p>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                        {cptCodes.map(c => <CodeBadge key={c.code} code={c.code} type="cpt" />)}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Assign to patient */}
+                            {!session.patient_name && (
+                                <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.12)' }}>
+                                    <p style={{ fontSize: 11, fontWeight: 600, color: '#a78bfa', marginBottom: 8 }}>Assign to Patient</p>
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <select
+                                            value={assignPatientId}
+                                            onChange={e => setAssignPatientId(e.target.value)}
+                                            style={{ flex: 1, padding: '7px 10px', borderRadius: 7, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0', fontSize: 12, fontFamily: 'Inter', outline: 'none' }}
+                                        >
+                                            <option value="">Select patient…</option>
+                                            {patients.map(p => (
+                                                <option key={p.patient_id} value={p.patient_id}>{p.name} ({p.patient_id})</option>
+                                            ))}
+                                        </select>
+                                        <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                                            onClick={handleAssign}
+                                            disabled={!assignPatientId || assigning}
+                                            style={{ padding: '7px 14px', borderRadius: 7, background: assignPatientId ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)', border: `1px solid ${assignPatientId ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.08)'}`, color: assignPatientId ? '#a78bfa' : 'rgba(148,163,184,0.4)', fontSize: 12, cursor: assignPatientId ? 'pointer' : 'not-allowed', fontFamily: 'Inter' }}>
+                                            {assigning ? '…' : 'Assign'}
+                                        </motion.button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
+    );
+}
+
+// ── Main HistoryPage ───────────────────────────────────────────────────────────
+export default function HistoryPage() {
+    const { authFetch } = useAuth();
+    const [sessions, setSessions] = useState([]);
+    const [patients, setPatients] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [sort, setSort] = useState('-created_at');
+    const [exporting, setExporting] = useState(false);
+
+    const fetchSessions = useCallback(async () => {
+        setLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (search) params.set('search', search);
+            if (dateFrom) params.set('date_from', dateFrom);
+            if (dateTo) params.set('date_to', dateTo);
+            if (sort) params.set('sort', sort);
+            const res = await authFetch(`/api/coding-history/?${params.toString()}`);
+            const data = await res.json();
+            setSessions(Array.isArray(data) ? data : (data.results || []));
+        } catch { }
+        finally { setLoading(false); }
+    }, [authFetch, search, dateFrom, dateTo, sort]);
+
+    const fetchPatients = useCallback(async () => {
+        try {
+            const res = await authFetch('/api/patients/');
+            const data = await res.json();
+            setPatients(Array.isArray(data) ? data : (data.results || []));
+        } catch { }
+    }, [authFetch]);
+
+    useEffect(() => { fetchSessions(); fetchPatients(); }, [fetchSessions, fetchPatients]);
+
+    const handleExportAll = async () => {
+        setExporting(true);
+        try {
+            const res = await authFetch('/api/coding-history/export/');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'coding_history_export.csv'; a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert('Export failed: ' + err.message);
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    const handleAssign = (sessionId, patientId) => {
+        setSessions(prev => prev.map(s =>
+            s.id === sessionId
+                ? { ...s, patient_name: patients.find(p => p.patient_id === patientId)?.name || patientId }
+                : s
+        ));
+    };
+
+    const successCount = sessions.filter(s => s.status === 'success').length;
+    const totalCodes = sessions.reduce((acc, s) => acc + (s.generated_codes?.icd_codes?.length || 0), 0);
+
+    return (
+        <div style={{ padding: '24px 28px', maxWidth: 1100 }}>
             {/* Header */}
             <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
                 <div>
                     <h1 style={{ fontSize: 24, fontWeight: 800 }}><span className="gradient-text">Coding History</span></h1>
-                    <p style={{ fontSize: 13, color: 'rgba(148,163,184,0.6)' }}>{SESSIONS.length} sessions • All time</p>
+                    <p style={{ fontSize: 13, color: 'rgba(148,163,184,0.6)', marginTop: 2 }}>
+                        {sessions.length} sessions • {successCount} successful • {totalCodes} codes
+                    </p>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}
-                        className="btn-neon-teal" style={{ padding: '8px 16px', borderRadius: 10, fontSize: 12, cursor: 'pointer', fontFamily: 'Inter', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Download size={13} /> Export All
+                <motion.button
+                    whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                    onClick={handleExportAll}
+                    disabled={exporting}
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: 7, padding: '9px 18px',
+                        borderRadius: 10, fontSize: 13, cursor: exporting ? 'not-allowed' : 'pointer',
+                        fontFamily: 'Inter', background: 'rgba(0,212,255,0.08)',
+                        border: '1px solid rgba(0,212,255,0.2)', color: '#00d4ff', opacity: exporting ? 0.6 : 1,
+                    }}
+                >
+                    <Download size={14} />
+                    {exporting ? 'Exporting…' : 'Export All CSV'}
+                </motion.button>
+            </motion.div>
+
+            {/* Filters */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+                className="glass-panel" style={{ padding: '14px 16px', borderRadius: 14, marginBottom: 20 }}>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    {/* Search */}
+                    <div className="glass-input" style={{ flex: 1, minWidth: 180, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 10 }}>
+                        <Search size={13} color="rgba(148,163,184,0.5)" />
+                        <input value={search} onChange={e => setSearch(e.target.value)}
+                            placeholder="Search notes or patient name…"
+                            style={{ background: 'none', border: 'none', outline: 'none', color: '#e2e8f0', fontSize: 12, width: '100%', fontFamily: 'Inter' }} />
+                    </div>
+
+                    {/* Date range */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Calendar size={13} color="rgba(148,163,184,0.5)" />
+                        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                            style={{ padding: '7px 10px', borderRadius: 9, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e2e8f0', fontSize: 12, fontFamily: 'Inter', outline: 'none', colorScheme: 'dark' }} />
+                        <span style={{ color: 'rgba(148,163,184,0.4)', fontSize: 12 }}>to</span>
+                        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                            style={{ padding: '7px 10px', borderRadius: 9, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e2e8f0', fontSize: 12, fontFamily: 'Inter', outline: 'none', colorScheme: 'dark' }} />
+                        {(dateFrom || dateTo) && (
+                            <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(148,163,184,0.5)', padding: 4 }}>
+                                <X size={12} />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Sort */}
+                    <select value={sort} onChange={e => setSort(e.target.value)}
+                        style={{ padding: '7px 10px', borderRadius: 9, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#e2e8f0', fontSize: 12, fontFamily: 'Inter', outline: 'none', cursor: 'pointer' }}>
+                        <option value="-created_at">Newest First</option>
+                        <option value="created_at">Oldest First</option>
+                        <option value="status">By Status</option>
+                    </select>
+
+                    <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+                        onClick={fetchSessions}
+                        style={{ padding: '7px 14px', borderRadius: 9, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(148,163,184,0.7)', fontSize: 12, cursor: 'pointer', fontFamily: 'Inter', display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <RefreshCw size={12} /> Apply
                     </motion.button>
                 </div>
             </motion.div>
 
-            {/* Search & filters */}
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-                className="glass-panel" style={{ padding: '12px 16px', borderRadius: 14, marginBottom: 20, display: 'flex', gap: 12 }}>
-                <div className="glass-input" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderRadius: 10 }}>
-                    <Search size={14} color="rgba(148,163,184,0.5)" />
-                    <input value={search} onChange={e => setSearch(e.target.value)}
-                        placeholder="Search by patient, session ID, or clinical note…"
-                        style={{ background: 'none', border: 'none', outline: 'none', color: '#e2e8f0', fontSize: 13, width: '100%', fontFamily: 'Inter' }} />
+            {/* Sessions list */}
+            {loading ? (
+                <div style={{ textAlign: 'center', padding: 48, color: 'rgba(148,163,184,0.4)' }}>
+                    <RefreshCw size={24} style={{ animation: 'spin 1s linear infinite', marginBottom: 8 }} />
+                    <p style={{ fontSize: 13 }}>Loading history…</p>
                 </div>
-                <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(148,163,184,0.7)', fontSize: 12, cursor: 'pointer', fontFamily: 'Inter' }}>
-                    <Calendar size={13} /> Date Range
-                </button>
-                <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(148,163,184,0.7)', fontSize: 12, cursor: 'pointer', fontFamily: 'Inter' }}>
-                    <ArrowUpDown size={13} /> Sort
-                </button>
-            </motion.div>
-
-            {/* Stats row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-                {[
-                    { label: 'Total Sessions', value: SESSIONS.length, icon: HistoryIcon, color: '#00d4ff' },
-                    { label: 'Validated', value: SESSIONS.filter(s => s.status === 'Validated').length, icon: CheckCircle2, color: '#10b981' },
-                    { label: 'Pending Review', value: SESSIONS.filter(s => s.status === 'Pending Review').length, icon: AlertTriangle, color: '#f59e0b' },
-                    { label: 'Avg Confidence', value: `${Math.round(SESSIONS.reduce((a, s) => a + s.confidence, 0) / SESSIONS.length)}%`, icon: Activity, color: '#8b5cf6' },
-                ].map(({ label, value, icon: Icon, color }, i) => (
-                    <motion.div key={label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 + i * 0.05 }}
-                        className="glass-panel" style={{ padding: '14px 16px', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 34, height: 34, borderRadius: 8, background: `${color}15`, border: `1px solid ${color}25`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Icon size={15} color={color} />
-                        </div>
-                        <div>
-                            <p style={{ fontSize: 18, fontWeight: 700, color }}>{value}</p>
-                            <p style={{ fontSize: 10, color: 'rgba(148,163,184,0.5)' }}>{label}</p>
-                        </div>
-                    </motion.div>
-                ))}
-            </div>
-
-            {/* Timeline list */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {filtered.map((s, i) => (
-                    <motion.div key={s.id}
-                        initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.04 }}
-                        className="glass-panel"
-                        style={{ borderRadius: 14, overflow: 'hidden' }}>
-                        {/* Main row */}
-                        <motion.div
-                            whileHover={{ backgroundColor: 'rgba(255,255,255,0.02)' }}
-                            onClick={() => setExpanded(expanded === s.id ? null : s.id)}
-                            style={{ padding: '16px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                                <div style={{
-                                    width: 40, height: 40, borderRadius: 10,
-                                    background: s.status === 'Validated' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
-                                    border: `1px solid ${s.status === 'Validated' ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.25)'}`,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                    {s.status === 'Validated' ? <CheckCircle2 size={16} color="#10b981" /> : <AlertTriangle size={16} color="#f59e0b" />}
-                                </div>
-                                <div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                        <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{s.patient}</span>
-                                        <span style={{ fontSize: 11, color: 'rgba(148,163,184,0.4)' }}>({s.patientId})</span>
-                                        <span style={{ fontSize: 11, color: 'rgba(148,163,184,0.4)' }}>• {s.id}</span>
-                                    </div>
-                                    <p style={{ fontSize: 11, color: 'rgba(148,163,184,0.5)', marginTop: 2, maxWidth: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {s.note}
-                                    </p>
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                                <div style={{ display: 'flex', gap: 4 }}>
-                                    {s.icdCodes.map(c => <span key={c} className="pill-badge pill-teal" style={{ fontSize: 9 }}>{c}</span>)}
-                                </div>
-                                <div style={{ textAlign: 'right' }}>
-                                    <p style={{ fontSize: 12, fontWeight: 600, color: confColor(s.confidence) }}>{s.confidence}%</p>
-                                    <p style={{ fontSize: 10, color: 'rgba(148,163,184,0.4)' }}>{s.duration}</p>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <Clock size={12} color="rgba(148,163,184,0.4)" />
-                                    <span style={{ fontSize: 11, color: 'rgba(148,163,184,0.5)' }}>{s.date}</span>
-                                </div>
-                                <motion.div animate={{ rotate: expanded === s.id ? 180 : 0 }} transition={{ duration: 0.2 }}>
-                                    <ChevronDown size={14} color="rgba(148,163,184,0.4)" />
-                                </motion.div>
-                            </div>
+            ) : sessions.length === 0 ? (
+                <div className="glass-panel" style={{ padding: 48, textAlign: 'center', borderRadius: 16 }}>
+                    <Clock size={40} color="rgba(148,163,184,0.3)" style={{ marginBottom: 12 }} />
+                    <p style={{ fontSize: 14, color: 'rgba(148,163,184,0.5)' }}>No coding sessions found</p>
+                    <p style={{ fontSize: 12, color: 'rgba(148,163,184,0.3)', marginTop: 6 }}>Generate some medical codes to see them here</p>
+                </div>
+            ) : (
+                <div>
+                    {sessions.map((s, i) => (
+                        <motion.div key={s.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}>
+                            <HistoryItem session={s} patients={patients} onAssign={handleAssign} />
                         </motion.div>
-
-                        {/* Expanded detail */}
-                        {expanded === s.id && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                                style={{ borderTop: '1px solid rgba(255,255,255,0.05)', padding: '16px 20px' }}>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                    <div>
-                                        <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(148,163,184,0.5)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Clinical Note</p>
-                                        <p style={{ fontSize: 12, color: 'rgba(226,232,240,0.8)', lineHeight: 1.6 }}>{s.note}</p>
-                                    </div>
-                                    <div>
-                                        <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(148,163,184,0.5)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Generated Codes</p>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                            <div>
-                                                <span style={{ fontSize: 10, color: '#00d4ff', fontWeight: 600 }}>ICD-11 TM2:</span>
-                                                <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                                                    {s.icdCodes.map(c => <span key={c} className="pill-badge pill-teal">{c}</span>)}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <span style={{ fontSize: 10, color: '#a78bfa', fontWeight: 600 }}>NAMASTE:</span>
-                                                <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                                                    {s.namasteCodes.map(c => <span key={c} className="pill-badge pill-purple">{c}</span>)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                                            <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                className="btn-neon-teal" style={{ padding: '6px 14px', borderRadius: 8, fontSize: 11, cursor: 'pointer', fontFamily: 'Inter', display: 'flex', alignItems: 'center', gap: 5 }}>
-                                                <Eye size={12} /> View Full
-                                            </motion.button>
-                                            <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
-                                                className="btn-neon-teal" style={{ padding: '6px 14px', borderRadius: 8, fontSize: 11, cursor: 'pointer', fontFamily: 'Inter', display: 'flex', alignItems: 'center', gap: 5 }}>
-                                                <Download size={12} /> Export
-                                            </motion.button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </motion.div>
-                        )}
-                    </motion.div>
-                ))}
-            </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
